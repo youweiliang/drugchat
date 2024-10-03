@@ -1,0 +1,7 @@
+datasets:
+  image_mol:
+    data_type: image
+    build_info:
+      storage: null
+      storage_valid: null
+      storage_test: null

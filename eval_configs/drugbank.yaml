@@ -1,0 +1,34 @@
+datasets:
+  cc_sbu_align:
+    text_processor:
+      train:
+        name: blip_caption
+    vis_processor:
+      train:
+        image_size: 224
+        name: blip2_image_eval
+model:
+  arch: mini_gpt4
+  ckpt: 'your trained checkpoint here'
+  encoder_ckpt: ckpt/gcn_contextpred.pth
+  encoder_names:
+  - gnn
+  - image_mol
+  end_sym: '###'
+  feat_dims:
+    graph_feat: 300
+    image_feat: 512
+  freeze_gnn: true
+  freeze_image_mol: true
+  low_resource: false
+  max_txt_len: 160
+  model_type: pretrain_vicuna
+  prompt_path: prompts/alignment.txt
+  prompt_template: '###Human: {} ###Assistant: '
+  prompt_tuning: 0
+  use_mlp: true
+run:
+  amp: true
+  amp_encoder: false
+  amp_proj: true
+  task: image_text_pretrain

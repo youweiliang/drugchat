@@ -1,0 +1,2 @@
+model:
+  arch: pretrain_gnn

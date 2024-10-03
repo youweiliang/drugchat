@@ -1,0 +1,1 @@
+python demo.py --cfg-path eval_configs/drugbank.yaml --gpu-id 0
