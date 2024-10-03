@@ -72,7 +72,7 @@ Then, set the path to the vicuna weight in the model config file
 [here](pipeline/configs/models/drugchat.yaml#L16) at Line 16.
 
 
-Download the GNN and CNN checkpoints and save them in a folder named `ckpt` under this repo. The file would be
+Download the GNN and CNN checkpoints from the [Google drive](https://drive.google.com/drive/folders/1DlLzYf7MHHdA09l5Cv3H5KUULmtazwo1?usp=sharing) and save them in a folder named `ckpt` under this repo. The files would be like
 ```
 ckpt
 ├── gcn_contextpred.pth
@@ -110,18 +110,20 @@ Find the checkpoint ('.pth' files) the training process saves, which is the `out
 Now we launch the `demo.py` in our `drugchat` environment. Make sure you have run `conda activate drugchat` in a new terminal in the same machine where you launch the python process `smiles2graph_image_demo.py`. Then, start the demo [demo.sh](demo.sh) on your local machine by running `bash demo.sh`. Then, open the URL created by the demo and try it out!
 
 ### Batch inference
-You can launch a Python script to obtain DrugChat's responses for a batch of queries:
+Make sure to launch the python process `smiles2graph_image_demo.py` in another terminal first. 
+Then, you can launch a Python script to obtain DrugChat's responses for a batch of queries:
 ```
 python inference.py --cfg-path eval_configs/drugbank.yaml --gpu-id 0 --in_file xxx/smiles_img_qa.json --out_file eval_results/aaa.json
 ```
 where the input file `smiles_img_qa.json` should be in this format:  
-{index: [ SMILES: [ [Question1 , Answer1], [Question2 , Answer2]... ] ], ... }
+{index: [ SMILES: [ [Question1 , Answer1], [Question2 , Answer2]... ] ], ... }   
+If there are no ground-truth answers in the input file, just put an empty string in the places of answers as placeholders. 
 
 The inference results are saved to the out_file specified above.
 
 ## Acknowledgement
-
-+ [MiniGPT-4](https://minigpt-4.github.io/) This repo is based on MiniGPT-4, an awesome repo for vision-language chatbot!
+This repo is based on the following repositories.
++ [MiniGPT-4](https://minigpt-4.github.io/)
 + [Lavis](https://github.com/salesforce/LAVIS)
 + [Vicuna](https://github.com/lm-sys/FastChat)
 + [ImageMol](https://github.com/HongxinXiang/ImageMol)
@@ -130,8 +132,7 @@ The inference results are saved to the out_file specified above.
 
 ## License
 This repository is under [BSD 3-Clause License](LICENSE.md).
-Many codes are based on [MiniGPT-4](https://github.com/Vision-CAIR/MiniGPT-4) with BSD 3-Clause License [here](LICENSE_MiniGPT4.md), which is based on [Lavis](https://github.com/salesforce/LAVIS) with 
-BSD 3-Clause License [here](LICENSE_Lavis.md).
+Many codes are based on [MiniGPT-4](https://github.com/Vision-CAIR/MiniGPT-4) with BSD 3-Clause License [here](LICENSE_MiniGPT4.md), which is based on [Lavis](https://github.com/salesforce/LAVIS) with BSD 3-Clause License [here](LICENSE_Lavis.md).
 
 
 ## Disclaimer
