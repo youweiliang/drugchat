@@ -14,16 +14,23 @@ This repository holds the code of DrugChat.
 
 ## Datasets
 
-Please download the data json files from the drive provided in the paper. The json files contain data for the ChEMBL, PubChem, and DrugBank Instruction Tuning Datasets. Save the files in a folder named `data_public` under this repo. The data structure is as follows. 
+Please download the data json files from the [Google drive](https://drive.google.com/drive/folders/1ofHOV5UFJUf2Xb-UljbK--wILF-_vBod?usp=sharing). The json files contain data for the ChEMBL, PubChem, and DrugBank Instruction Tuning Datasets. Save the files in a folder named `data_public` under this repository (repo). The data structure is as follows. 
 
 {SMILES String: [ [Question1 , Answer1], [Question2 , Answer2]... ] }
 
 
 ## Getting Started
+### System Requirements
+The DrugChat was tested on Ubuntu 20.04 with an Nvidia A100 80G GPU (Nvidia driver version: 560.35.03). Other Linux systems and GPUs (with more than 40 GB GPU memory) should also work. The Python environment was based on [Miniconda](https://docs.anaconda.com/miniconda/miniconda-install/) 23.1.0. You can install the latest Nvidia driver and the latest Minicond, as they should not make any difference. The complete list of software requirements is specified in [environment.yml](environment.yml).
+
+
 ### Installation
+
+Typical install time on an Linux server varies from 10 to 30 minutes, depending on your Internet connection speed.
 
 **1. Prepare the code and the environment**
 
+[Install Git](https://git-scm.com/downloads) if it has not been installed. 
 Git clone our repository, creating a python environment and ativate it via the following command
 
 ```bash
@@ -107,7 +114,7 @@ Then, the python process `smiles2graph_image_demo.py` will be running in the bac
 
 Find the checkpoint ('.pth' files) the training process saves, which is the `output_dir` specified in the training configuration [train_configs/drugchat.yaml](train_configs/drugchat.yaml) by default. Specify the checkpoint path in the `ckpt` field under the model section in the evaluation configuration file [eval_configs/drugbank.yaml](eval_configs/drugbank.yaml).
 
-Now we launch the `demo.py` in our `drugchat` environment. Make sure you have run `conda activate drugchat` in a new terminal in the same machine where you launch the python process `smiles2graph_image_demo.py`. Then, start the demo [demo.sh](demo.sh) on your local machine by running `bash demo.sh`. Then, open the URL created by the demo and try it out!
+Now we launch the `demo.py` in our `drugchat` environment. Make sure you have run `conda activate drugchat` in a new terminal in the same machine where you launch the python process `smiles2graph_image_demo.py`. Then, start the demo [demo.sh](demo.sh) on your local machine by running `bash demo.sh`. Then, open the URL created by the demo and try it out! This should open the demo website, where you can input a SMILES string and a textual question to ask DrugChat. It could take one minute for Drugchat to generate a response and show it on the demo website, depending on your GPU's computational power and the response's length.
 
 ### Batch inference
 Make sure to launch the python process `smiles2graph_image_demo.py` in another terminal first. 
