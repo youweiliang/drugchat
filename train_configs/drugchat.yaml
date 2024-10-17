@@ -1,5 +1,5 @@
 model:
-  arch: mini_gpt4
+  arch: drugchat
   model_type: pretrain_vicuna
   freeze_gnn: true
   freeze_image_mol: true

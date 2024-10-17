@@ -8,7 +8,7 @@ datasets:
         image_size: 224
         name: blip2_image_eval
 model:
-  arch: mini_gpt4
+  arch: drugchat
   ckpt: 'your trained checkpoint here'
   encoder_ckpt: ckpt/gcn_contextpred.pth
   encoder_names:

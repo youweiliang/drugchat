@@ -33,7 +33,7 @@ class StoppingCriteriaSub(StoppingCriteria):
         return False
 
 
-@registry.register_model("mini_gpt4")
+@registry.register_model("drugchat")
 class DrugChat(BaseModel):
     """
     GNN GPT-LLAMA model.

@@ -1,6 +1,6 @@
 # DrugChat: Multi-Modal Large Language Model Enables All-Purpose Prediction of Drug Mechanisms and Properties
 
-This repository holds the code of DrugChat.
+This repository holds the code of DrugChat. Read the biorxiv [preprint](https://www.biorxiv.org/content/10.1101/2024.09.29.615524).
 
 
 
