@@ -3,7 +3,6 @@ outputs
 __pycache__
 *.DS_Store
 data
-dataset
 ckpt
 *results
 results*
