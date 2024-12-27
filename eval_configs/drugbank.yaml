@@ -10,7 +10,6 @@ datasets:
 model:
   arch: drugchat
   ckpt: 'your trained checkpoint here'
-  encoder_ckpt: ckpt/gcn_contextpred.pth
   encoder_names:
   - gnn
   - image_mol

@@ -9,7 +9,6 @@ model:
   prompt_path: "prompts/alignment.txt"
   prompt_template: '###Human: {} ###Assistant: '
   ckpt: ""
-  encoder_ckpt: ckpt/ImageMol.pth.tar
   encoder_names:
   - gnn
   - image_mol
@@ -20,7 +19,7 @@ model:
   use_mlp: true
 
 datasets:
-  chembl:
+  chembl:  # put any name here for your dataset
     label: "ChEMBL data"
     type: default
     vis_processor:

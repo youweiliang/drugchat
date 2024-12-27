@@ -77,9 +77,9 @@ class DrugChat(BaseModel):
         self.feat_dims = feat_dims
         if "gnn" in self.encoder_names:
             self.use_graph_agg = use_graph_agg
-            self.create_gnn(encoder_ckpt, freeze_gnn)
+            self.create_gnn(freeze_gnn)
         if "image_mol" in self.encoder_names:
-            self.create_image_mol(encoder_ckpt, freeze_image_mol)
+            self.create_image_mol(freeze_image_mol)
 
         self.ln_vision = nn.Identity()
 
@@ -163,7 +163,9 @@ class DrugChat(BaseModel):
             return self.llama_model.base_model.model.model.embed_tokens(*args)
         return self.llama_model.model.embed_tokens(*args)
 
-    def create_gnn(self, model_path, freeze):
+    def create_gnn(self, freeze):
+        model_path = "ckpt/gcn_contextpred.pth"
+        assert os.path.exists(model_path), f"Cannot find checkpoint: {model_path}"
         print('Loading GNN')
         print(f"use_graph_agg={self.use_graph_agg}")
         self.gnn = GNN(num_layer=5, emb_dim=300, gnn_type='gcn', use_graph_agg=self.use_graph_agg)
@@ -184,8 +186,9 @@ class DrugChat(BaseModel):
         
         print('Loaded GNN')
 
-    def create_image_mol(self, model_path, freeze):
+    def create_image_mol(self, freeze):
         model_path = "ckpt/ImageMol.pth.tar"
+        assert os.path.exists(model_path), f"Cannot find checkpoint: {model_path}"
         model = ImageMol()
         model.load_from_pretrained(url_or_filename=model_path)
         self.image_mol = model
