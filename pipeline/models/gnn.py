@@ -256,7 +256,7 @@ class GNN(torch.nn.Module):
         ###List of batchnorms
         self.batch_norms = torch.nn.ModuleList()
         for layer in range(num_layer):
-            self.batch_norms.append(torch.nn.BatchNorm1d(emb_dim))
+            self.batch_norms.append(torch.nn.BatchNorm1d(emb_dim, momentum=0.001))
 
         if self.JK == "concat":
             self.out_dim = emb_dim * (self.num_layer + 1)
@@ -397,7 +397,23 @@ class GNN_graphpred(torch.nn.Module):
 
     def from_pretrained(self, model_file):
         #self.gnn = GNN(self.num_layer, self.emb_dim, JK = self.JK, drop_ratio = self.drop_ratio)
-        self.gnn.load_state_dict(torch.load(model_file))
+        if os.path.isfile(model_file):
+            checkpoint = torch.load(model_file, map_location="cpu")
+        else:
+            raise RuntimeError("checkpoint url or path is invalid")
+
+        if "model" in checkpoint:
+            state_dict = checkpoint["model"]
+        elif "state_dict" in checkpoint:
+            state_dict = checkpoint["state_dict"]
+        else:
+            state_dict = checkpoint
+
+        if "model" in checkpoint:
+            msg = self.load_state_dict(state_dict)
+        else:
+            msg = self.gnn.load_state_dict(state_dict)
+        print(f"GNN_graphpred loaded from {model_file}:", msg)
 
     def forward(self, *argv):
         if len(argv) == 4:
@@ -413,3 +429,15 @@ class GNN_graphpred(torch.nn.Module):
         return self.graph_pred_linear(self.pool(node_representation, batch))
 
 
+def count_parameters(model):
+    total_params = 0
+    for p in model.parameters():
+        if p.requires_grad:
+            total_params += p.numel()
+    return total_params
+
+
+if __name__ == "__main__":
+    gnn = GNN_graphpred(5, 300, 120, graph_pooling='attention', gnn_type='gin')
+    gnn.from_pretrained('ckpt/gin_contextpred.pth')
+    print(f"number of parameters", count_parameters(gnn))

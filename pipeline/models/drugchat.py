@@ -1,23 +1,25 @@
 import logging
 import random
+import re
 
 import torch
 from torch.cuda.amp import autocast as autocast
 import torch.nn as nn
+import torch.nn.functional as F
 
 from pipeline.common.registry import registry
 from pipeline.models.utils import disabled_train, Mlp
 from pipeline.models.modeling_llama import LlamaForCausalLM
 from transformers import LlamaTokenizer
 
-from pipeline.models.gnn import GNN
+from pipeline.models.gnn import GNN, GNN_graphpred
 import contextlib
 from pipeline.models.base_model import BaseModel
 from transformers import StoppingCriteria, StoppingCriteriaList
 
 from pipeline.models.image_mol import ImageMol
 from peft import LoraConfig, get_peft_model, LoraModel
-import pickle, os
+
 
 class StoppingCriteriaSub(StoppingCriteria):
 
@@ -46,7 +48,8 @@ class DrugChat(BaseModel):
     def __init__(
         self,
         vit_model="eva_clip_g",
-        encoder_ckpt=None,
+        gnn_ckpt=None,
+        image_mol_ckpt=None,
         img_size=224,
         drop_path_rate=0,
         use_grad_checkpoint=False,
@@ -77,15 +80,23 @@ class DrugChat(BaseModel):
         self.feat_dims = feat_dims
         if "gnn" in self.encoder_names:
             self.use_graph_agg = use_graph_agg
-            self.create_gnn(freeze_gnn)
+            self.create_gnn(gnn_ckpt, freeze_gnn)
         if "image_mol" in self.encoder_names:
-            self.create_image_mol(freeze_image_mol)
+            self.create_image_mol(image_mol_ckpt, freeze_image_mol)
 
         self.ln_vision = nn.Identity()
 
         print('Loading LLAMA')
         self.llama_tokenizer = LlamaTokenizer.from_pretrained(llama_model, use_fast=False)
         self.llama_tokenizer.pad_token = self.llama_tokenizer.eos_token
+        self.token_dtype = self.llama_tokenizer(
+            'foo',
+            return_tensors="pt",
+            padding="longest",
+            truncation=True,
+            max_length=max_txt_len,
+            add_special_tokens=False
+        ).input_ids.dtype
 
         if self.low_resource:
             self.llama_model = LlamaForCausalLM.from_pretrained(
@@ -117,6 +128,10 @@ class DrugChat(BaseModel):
                     kk,
                     get_projector(dim, self.llama_model.config.hidden_size)
                     )
+                # if 'image_mol' in kk and freeze_image_mol:
+                #     for p in self.llama_proj[kk].parameters():
+                #         p.requires_grad = False
+                #     self.llama_proj[kk].eval()
         else:
             self.llama_proj = get_projector(
                 self.encoder_out_dim, self.llama_model.config.hidden_size
@@ -163,22 +178,26 @@ class DrugChat(BaseModel):
             return self.llama_model.base_model.model.model.embed_tokens(*args)
         return self.llama_model.model.embed_tokens(*args)
 
-    def create_gnn(self, freeze):
-        model_path = "ckpt/gcn_contextpred.pth"
-        assert os.path.exists(model_path), f"Cannot find checkpoint: {model_path}"
+    def create_gnn(self, model_path, freeze):
         print('Loading GNN')
         print(f"use_graph_agg={self.use_graph_agg}")
-        self.gnn = GNN(num_layer=5, emb_dim=300, gnn_type='gcn', use_graph_agg=self.use_graph_agg)
-        self.gnn.load_from_pretrained(url_or_filename=model_path)
-        self.encoder_out_dim = self.gnn.out_dim
+
+        emb_dim = 300
+
+        self.gnn = GNN_graphpred(5, emb_dim, emb_dim, graph_pooling='attention', gnn_type='gin')
+        # self.gnn.from_pretrained('ckpt/gin_contextpred.pth')
+        if model_path:
+            self.gnn.from_pretrained(model_path)
+
+        self.encoder_out_dim = emb_dim
 
         if freeze:
             for name, param in self.gnn.named_parameters():
                 param.requires_grad = False
             self.gnn = self.gnn.eval()
-            self.gnn.train = disabled_train
+            # self.gnn.train = disabled_train
             print("freezed GNN")
-        
+
         pt = None
         if not self.use_graph_agg:
             pt = nn.Parameter(torch.zeros(1, self.gnn.out_dim))
@@ -186,19 +205,19 @@ class DrugChat(BaseModel):
         
         print('Loaded GNN')
 
-    def create_image_mol(self, freeze):
-        model_path = "ckpt/ImageMol.pth.tar"
-        assert os.path.exists(model_path), f"Cannot find checkpoint: {model_path}"
+    def create_image_mol(self, model_path, freeze):
         model = ImageMol()
-        model.load_from_pretrained(url_or_filename=model_path)
+        if model_path:
+            model.load_from_pretrained(url_or_filename=model_path)
+        emb_dim = model.emb_dim
         self.image_mol = model
-        self.encoder_out_dim = model.emb_dim
+        self.encoder_out_dim = emb_dim
 
         if freeze:
             for name, param in self.image_mol.named_parameters():
                 param.requires_grad = False
             self.image_mol = self.image_mol.eval()
-            self.image_mol.train = disabled_train
+            # self.image_mol.train = disabled_train
             print("freezed image_mol")
         print('Loaded image_mol')
 
@@ -227,6 +246,8 @@ class DrugChat(BaseModel):
             graph_feat = self.gnn(graph).to(device)
             if not self.use_graph_agg:
                 graph_feat = self.pad_node(graph, graph_feat)
+            if graph_feat.ndim == 2:
+                graph_feat = graph_feat.unsqueeze(1)
             feat = graph_feat
             inputs["feat"] = feat
             inputs["graph_feat"] = feat
@@ -237,9 +258,10 @@ class DrugChat(BaseModel):
                 self.vit_to_cpu()
                 image = image.to("cpu")
             feat = self.image_mol(image).to(device)
-            feat = feat.unsqueeze(1)
-            inputs["feat"] = feat
-            inputs["image_feat"] = feat
+            img_feat = feat.unsqueeze(1)
+
+            inputs["feat"] = img_feat
+            inputs["image_feat"] = img_feat
         
         if do_proj:
             inputs_llama, atts_llama = self.proj_feat(inputs, device)
@@ -265,6 +287,7 @@ class DrugChat(BaseModel):
             feats = []
             for kk, dim in self.feat_dims.items():
                 feat = features[kk]
+                feat = F.dropout(feat, p=0.2, training=self.training)
                 inputs_tokens = self.llama_proj[kk](feat)
                 feats.append(inputs_tokens)
             img_embeds = torch.cat(feats, dim=1)
@@ -307,7 +330,7 @@ class DrugChat(BaseModel):
         else:
             return img_embeds, atts_img
 
-    def forward(self, samples):
+    def forward(self, samples, generate=False, generate_prob=False):
         if "gnn" in self.encoder_names:
             inputs = samples["graph"]
             device = inputs.x.device
@@ -331,6 +354,22 @@ class DrugChat(BaseModel):
 
         self.llama_tokenizer.padding_side = "right"
 
+        batch_size = img_embeds.shape[0]
+        bos = torch.ones([batch_size, 1],
+                         dtype=self.token_dtype,
+                         device=device) * self.llama_tokenizer.bos_token_id
+        bos_embeds = self.llama_embed_tokens(bos)
+        img_embeds = img_embeds.to(dtype=bos_embeds.dtype)
+        embs = torch.cat([bos_embeds, img_embeds], dim=1)
+
+        out = {}
+        if generate:
+            # Generate output
+            tt = self.gen_(embs, generate_prob)
+            out = {'gen': tt}
+            if "text_input" not in samples:
+                return out
+
         text = [t + self.end_sym for t in samples["text_input"]]
 
         to_regress_tokens = self.llama_tokenizer(
@@ -352,19 +391,17 @@ class DrugChat(BaseModel):
         )
         targets = torch.cat([empty_targets, targets], dim=1)
 
-        batch_size = img_embeds.shape[0]
-        bos = torch.ones([batch_size, 1],
-                         dtype=to_regress_tokens.input_ids.dtype,
-                         device=to_regress_tokens.input_ids.device) * self.llama_tokenizer.bos_token_id
-        bos_embeds = self.llama_embed_tokens(bos)
         atts_bos = atts_img[:, :1]
 
         to_regress_embeds = self.llama_embed_tokens(to_regress_tokens.input_ids)
-        img_embeds = img_embeds.to(dtype=bos_embeds.dtype)
         inputs_embeds = torch.cat([bos_embeds, img_embeds, to_regress_embeds], dim=1)
         attention_mask = torch.cat([atts_bos, atts_img, to_regress_tokens.attention_mask], dim=1)
-        # embs = torch.cat([bos_embeds, img_embeds], dim=1)
-        # tt = self.gen_(embs)
+
+        weight = None
+        if 'weight' in samples:
+            # Use sample-wise weight in the teacher-forcing cross entropy loss
+            weight = samples['weight'].to(device)
+            weight = weight.reshape(batch_size, 1).expand_as(targets)
 
         with self.maybe_autocast():
             outputs = self.llama_model(
@@ -372,12 +409,13 @@ class DrugChat(BaseModel):
                 attention_mask=attention_mask,
                 return_dict=True,
                 labels=targets,
+                weight=weight,
             )
         loss = outputs.loss
 
-        return {"loss": loss}
+        return {"loss": loss} | out
 
-    def gen_(self, embs):
+    def gen_(self, embs, prob):
         """
         Generate text.
         """
@@ -395,16 +433,41 @@ class DrugChat(BaseModel):
             repetition_penalty=1.,
             length_penalty=1.,
             temperature=1,
+            return_dict_in_generate=prob,
+            output_scores=prob
         )
-        output_token = outputs[0]
-        if output_token[0] == 0:  # the model might output a unknow token <unk> at the beginning. remove it
-            output_token = output_token[1:]
-        if output_token[0] == 1:  # some users find that there is a start token <s> at the beginning. remove it
-            output_token = output_token[1:]
-        output_text = self.llama_tokenizer.decode(output_token, add_special_tokens=False)
-        output_text = output_text.split('###')[0]  # remove the stop sign '###'
-        output_text = output_text.split('Assistant:')[-1].strip()
-        return output_text
+
+        output_texts = []
+        output_probs = []
+        for i in range(embs.shape[0]):
+            if prob:
+                # Get the probability of generating Yes/No
+                output_token = outputs.sequences[i]
+
+                # Get the logits for the first generated token
+                logits = outputs.scores[0][i]  # Logits for the next token
+                probs = torch.nn.functional.softmax(logits, dim=-1)  # Apply softmax to get probabilities
+
+                # Get token IDs for "Yes" and "No"
+                yes_token_id = self.llama_tokenizer("Yes", add_special_tokens=False).input_ids[0]
+                no_token_id = self.llama_tokenizer("No", add_special_tokens=False).input_ids[0]
+
+                # Extract probabilities for "Yes" and "No"
+                yes_prob = probs[yes_token_id].item()
+                no_prob = probs[no_token_id].item()
+                output_prob = (yes_prob, no_prob)
+                output_probs.append(output_prob)
+            else:
+                output_token = outputs[i]
+            if output_token[0] == 0:  # the model might output a unknow token <unk> at the beginning. remove it
+                output_token = output_token[1:]
+            if output_token[0] == 1:  # some users find that there is a start token <s> at the beginning. remove it
+                output_token = output_token[1:]
+            output_text = self.llama_tokenizer.decode(output_token, add_special_tokens=False)
+            output_text = output_text.split('###')[0]  # remove the stop sign '###'
+            output_text = output_text.split('Assistant:')[-1].strip()
+            output_texts.append(output_text)
+        return output_texts, output_probs
 
     def maybe_autocast(self, dtype=torch.float16):
         # if on cpu, don't use autocast
@@ -419,7 +482,10 @@ class DrugChat(BaseModel):
     @classmethod
     def from_config(cls, cfg):
         vit_model = cfg.get("vit_model", "eva_clip_g")
-        encoder_ckpt = cfg.get("encoder_ckpt", "ckpt/gcn_contextpred.pth")
+        encoder_ckpt = cfg.get("encoder_ckpt", None)
+        assert encoder_ckpt is None, "encoder_ckpt is no longer used, check image_mol_ckpt/gnn_ckpt"
+        image_mol_ckpt = cfg.get("image_mol_ckpt", "ckpt/ImageMol.pth.tar")
+        gnn_ckpt = cfg.get("gnn_ckpt", "ckpt/gin_contextpred.pth")
         img_size = cfg.get("image_size")
         num_query_token = cfg.get("num_query_token")
         llama_model = cfg.get("llama_model")
@@ -434,7 +500,7 @@ class DrugChat(BaseModel):
 
         prompt_path = cfg.get("prompt_path", "")
         prompt_template = cfg.get("prompt_template", "")
-        max_txt_len = cfg.get("max_txt_len", 32)
+        max_txt_len = cfg.get("max_txt_len", 160)
         end_sym = cfg.get("end_sym", '\n')
         use_graph_agg = cfg.get("use_graph_agg", True)
         encoder_name = cfg.get("encoder_name", "gnn")
@@ -446,7 +512,8 @@ class DrugChat(BaseModel):
 
         model = cls(
             vit_model=vit_model,
-            encoder_ckpt=encoder_ckpt,
+            image_mol_ckpt=image_mol_ckpt,
+            gnn_ckpt=gnn_ckpt,
             img_size=img_size,
             drop_path_rate=drop_path_rate,
             use_grad_checkpoint=use_grad_checkpoint,
@@ -469,10 +536,44 @@ class DrugChat(BaseModel):
             lora_rank=lora_rank,
         )
 
-        ckpt_path = cfg.get("ckpt", "")  # load weights of DrugChat
+        ckpt_path = cfg.get("ckpt", None)  # load weights of DrugChat
+        if isinstance(ckpt_path, str):
+            ckpt_path = [ckpt_path]
         if ckpt_path:
-            ckpt = torch.load(ckpt_path, map_location="cpu")
-            msg = model.load_state_dict(ckpt['model'], strict=False)
-            print("Loaded checkpoint from {}: {}".format(ckpt_path, msg))
+            # could have multiple ckpt, as in pretraining and finetuning (where different model components are trained)
+            for path in ckpt_path:
+                ckpt = torch.load(path, map_location="cpu")
+                model_dict = ckpt['model']
+
+                if gnn_ckpt != "ckpt/gin_contextpred.pth":
+                    # not to overwrite gnn
+                    new_dict = {}
+                    for name, p in model_dict.items():
+                        if 'gnns' in name:
+                           continue
+                        new_dict[name] = p
+                    model_dict = new_dict
+                
+                if image_mol_ckpt != "ckpt/ImageMol.pth.tar":
+                    # not to overwrite image mol
+                    new_dict = {}
+                    for name, p in model_dict.items():
+                        if 'image_mol' in name:
+                           continue
+                        new_dict[name] = p
+                    model_dict = new_dict
+                
+                if lora_rank:
+                    # convert names for lora model
+                    # in case the saved model is not lora, but the current model is lora
+                    new_dict = {}
+                    for name, p in model_dict.items():
+                        if name.startswith('llama_model.model'):
+                            name = name.replace('llama_model.model', 'llama_model.base_model.model.model')
+                        new_dict[name] = p
+                    model_dict = new_dict
+
+                msg = model.load_state_dict(model_dict, strict=False)
+                print("Loaded checkpoint from {}: {}".format(path, msg))
 
         return model

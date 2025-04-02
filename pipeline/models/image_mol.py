@@ -85,8 +85,7 @@ class ImageMol(nn.Module):
 
         msg = self.load_state_dict(state_dict, strict=False)
 
-        logging.info("Loading info: {}".format(msg))
-        logging.info("load checkpoint from %s" % url_or_filename)
+        print("Loaded from {}: {}".format(url_or_filename, msg))
 
         return msg
 
