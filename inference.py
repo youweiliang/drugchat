@@ -74,6 +74,7 @@ if model.lora_rank:
     model.llama_model = model.llama_model.merge_and_unload()
 
 model = model.to('cuda:{}'.format(args.gpu_id))
+model = model.eval()
 
 chat = Chat(model, device='cuda:{}'.format(args.gpu_id))
 print('Initialization Finished')
@@ -107,21 +108,23 @@ def gradio_ask(user_message, chatbot, chat_state):
 
 
 @torch.no_grad()
-def gradio_answer(chatbot, chat_state, img_list, num_beams, temperature):
+def gradio_answer(chatbot, chat_state, img_list, num_beams, temperature, prob):
     with torch.cuda.amp.autocast(use_amp):
         llm_message = chat.answer(conv=chat_state,
                                 img_list=img_list,
                                 num_beams=num_beams,
                                 temperature=temperature,
                                 max_new_tokens=args.max_new_tokens,
-                                max_length=2000)[0]
-    chatbot[-1][1] = llm_message
-    return chatbot, chat_state, img_list
+                                max_length=2000,
+                                prob=prob)
+    chatbot[-1][1] = llm_message[0]
+    return chatbot, chat_state, llm_message[2]
 
 
-def infer(smiles, questions):
+def infer(smiles, questions, get_prob=True):
     
     chat = []
+    probs = []
     chat_state, img_list = upload_img(smiles)
     if chat_state is None:
         return
@@ -130,10 +133,11 @@ def infer(smiles, questions):
         chatbot = []
         chat_state_ = copy.deepcopy(chat_state)
         text_input, chatbot, chat_state_ = gradio_ask(text_input, chatbot, chat_state_)
-        chatbot, chat_state_, img_list_ = gradio_answer(chatbot, chat_state_, img_list, args.num_beams, args.temperature)
+        chatbot, chat_state_, yes_no_prob = gradio_answer(chatbot, chat_state_, img_list, args.num_beams, args.temperature, get_prob)
         chat.extend(chatbot)
+        probs.append(yes_no_prob)
 
-    return chat
+    return chat, probs
 
 
 def is_int(x):
@@ -149,28 +153,27 @@ def infer_QA():
         js = json.load(f)
     out = {}
     for smi, rec in tqdm.tqdm(js.items()):
-        t0 = time.time()
         if is_int(smi):
             smi, rec = rec
 
         smi_ = copy.copy(smi)
         questions = [question for question, answer in rec]
         answers = [answer for question, answer in rec]
-        qa_pairs = infer(smi, questions)
+        qa_pairs, probs = infer(smi, questions)
         if qa_pairs is None:
             # skip smiles that cannot be converted to image/graph
+            print(f"Skip {smi_}")
             continue
         assert len(qa_pairs) == len(answers)
-        for ans, qa in zip(answers, qa_pairs):
+        for ans, qa, yes_no_prob in zip(answers, qa_pairs, probs):
             qa.insert(1, ans)
+            qa.append(yes_no_prob)
         out[smi_] = qa_pairs
-        # print(smi_, "============ used time:", time.time() - t0)
-
-        # for qa in qa_pairs:
-        #     print(qa)
 
         with open(args.out_file, "wt") as f:
             json.dump(out, f, indent=2)
 
+    with open(args.out_file, "wt") as f:
+        json.dump(out, f, indent=2)
 
 infer_QA()

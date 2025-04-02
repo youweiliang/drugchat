@@ -14,6 +14,7 @@ from typing import List, Tuple, Any
 
 from pipeline.common.registry import registry
 from torch_geometric.data import Data, Batch
+from dataset.smiles2graph_image_demo_realtime import convert_smiles
 
 
 class SeparatorStyle(Enum):
@@ -146,7 +147,7 @@ class Chat:
             conv.append_message(conv.roles[0], text)
 
     def answer(self, conv, img_list, max_new_tokens=300, num_beams=1, min_length=1, top_p=0.9,
-               repetition_penalty=1.0, length_penalty=1, temperature=1.0, max_length=2000):
+               repetition_penalty=1.0, length_penalty=1, temperature=1.0, max_length=2000, prob=False):
         conv.append_message(conv.roles[1], None)
         embs = self.get_context_emb(conv, img_list)
 
@@ -169,8 +170,27 @@ class Chat:
             repetition_penalty=repetition_penalty,
             length_penalty=length_penalty,
             temperature=temperature,
+            return_dict_in_generate=prob,
+            output_scores=prob
         )
-        output_token = outputs[0]
+
+        if prob:
+            output_token = outputs.sequences[0]
+
+            # Get the logits for the first generated token
+            logits = outputs.scores[0][0]  # Logits for the next token
+            probs = torch.nn.functional.softmax(logits, dim=-1)  # Apply softmax to get probabilities
+
+            # Get token IDs for "Yes" and "No"
+            yes_token_id = self.model.llama_tokenizer("Yes", add_special_tokens=False).input_ids[0]
+            no_token_id = self.model.llama_tokenizer("No", add_special_tokens=False).input_ids[0]
+
+            # Extract probabilities for "Yes" and "No"
+            yes_prob = probs[yes_token_id].item()
+            no_prob = probs[no_token_id].item()
+            output_prob = (yes_prob, no_prob)
+        else:
+            output_token = outputs[0]
         if output_token[0] == 0:  # the model might output a unknow token <unk> at the beginning. remove it
             output_token = output_token[1:]
         if output_token[0] == 1:  # some users find that there is a start token <s> at the beginning. remove it
@@ -179,41 +199,22 @@ class Chat:
         output_text = output_text.split('###')[0]  # remove the stop sign '###'
         output_text = output_text.split('Assistant:')[-1].strip()
         conv.messages[-1][1] = output_text
-        return output_text, output_token.cpu().numpy()
 
-    def upload_img(self, image, conv, img_list, autocast=False, autocast_proj=False):
-        assert isinstance(image, str), f"Expected a string but got {image}"
+        if prob:
+            return output_text, output_token.cpu().numpy(), output_prob
+        return output_text, output_token.cpu().numpy(), None
 
-        timestamp = time.time()
-        with open("dataset/tmp_smiles.txt", "wt") as f:
-            f.write(str(timestamp) + " " + image)
+    def upload_img(self, smiles, conv, img_list, autocast=False, autocast_proj=False):
+        assert isinstance(smiles, str), f"Expected a string but got {smiles}"
+
+        g, img = convert_smiles(smiles)
+        if g is None:
+            return
         inputs = {}
-        for _ in range(60):
-            time.sleep(1)
-            pkl_file = "dataset/tmp_smiles.pkl"
-            if os.path.isfile(pkl_file) and os.path.getsize(pkl_file) > 1:
-                cnt = 10
-                while cnt > 0:
-                    try:
-                        with open(pkl_file, "rb") as f:
-                            res = pickle.load(f)
-                        break
-                    except EOFError:
-                        cnt -= 1
-                        continue
-                t2 = res["timestamp"]
-                if t2 > timestamp:
-                    if "graph" in res:
-                        g = res["graph"]
-                        graph0 = Data(x=torch.asarray(g['node_feat']), edge_index=torch.asarray(g['edge_index']), edge_attr=torch.asarray(g['edge_feat']))
-                        inputs["graph"] = Batch.from_data_list([graph0]).to(self.device)
-                    if "img_save_path" in res:
-                        img_save_path = res["img_save_path"]
-                        img = Image.open(img_save_path).convert("RGB")
-                        inputs["image"] = self.transforms(img).unsqueeze(0).to(self.device)
-                    break
-        if "image" not in inputs and "graph" not in inputs:
-            return  # issues in creating inputs
+        graph0 = Data(x=torch.asarray(g['node_feat']), edge_index=torch.asarray(g['edge_index']), edge_attr=torch.asarray(g['edge_feat']))
+        inputs["graph"] = Batch.from_data_list([graph0]).to(self.device)
+        img = img.convert("RGB")
+        inputs["image"] = self.transforms(img).unsqueeze(0).to(self.device)
 
         image_emb, _ = self.model.encode_img_infer(inputs, device=self.device, autocast=autocast, autocast_proj=autocast_proj)
         img_list.append(image_emb)
@@ -237,5 +238,3 @@ class Chat:
         mixed_embs = [emb for pair in zip(seg_embs[:-1], img_list) for emb in pair] + [seg_embs[-1]]
         mixed_embs = torch.cat(mixed_embs, dim=1)
         return mixed_embs
-
-

@@ -1,10 +1,11 @@
 from rdkit import Chem
 import numpy as np
-import json
+import time
 import pickle
-import argparse
-import os
 from rdkit.Chem.rdchem import BondType, BondDir, ChiralType
+import os
+import datetime
+from rdkit.Chem import Draw
 
 
 BOND_TYPE = {BondType.SINGLE: 0, BondType.DOUBLE: 1, BondType.TRIPLE: 2, BondType.AROMATIC: 3}
@@ -41,10 +42,7 @@ def smiles2graph(smiles_string):
     :return: graph object
     """
 
-    if isinstance(smiles_string, str):
-        mol = Chem.MolFromSmiles(smiles_string)
-    else:
-        mol = smiles_string
+    mol = Chem.MolFromSmiles(smiles_string)
 
     # atoms
     atom_features_list = []
@@ -88,60 +86,25 @@ def smiles2graph(smiles_string):
     return graph 
 
 
-def convert_chembl():
-    # with open("/home/youwei/project/drugchat/data/ChEMBL_QA_train.json", "rt") as f:
-    with open("/home/youwei/project/drugchat/data/PubChem_QA.json", "rt") as f:
-        js = json.load(f)
-    out = []
-    for smi, rec in js.items():
-        graph = smiles2graph(smi)
-        for question, answer in rec:
-            out.append({"graph": graph, "question": question, "answer": str(answer)})
+def Smiles2Img(smis, size=224, savePath=None):
+    '''
+        smis: e.g. COC1=C(C=CC(=C1)NS(=O)(=O)C)C2=CN=CN3C2=CC=C3
+        path: E:/a/b/c.png
+    '''
+    # try:
+    mol = Chem.MolFromSmiles(smis)
+    img = Draw.MolsToGridImage([mol], molsPerRow=1, subImgSize=(size, size))
+    if savePath is not None:
+        img.save(savePath)
+    return img
+    # except:
+    #     return None
 
-    
-    with open("./dataset/PubChem_QA_train.pkl", "wb") as f:
-        pickle.dump(out, f)
 
-
-def is_int(x):
+def convert_smiles(smi):
     try:
-        x = int(x)
+        g = smiles2graph(smi)
+        img = Smiles2Img(smi)
+        return g, img
     except:
-        return False
-    return True
-
-
-def convert_simple_graph_smi(infile, outfile):
-    """
-    Convert to a data format that support both graph and images (which is converted to feature dataset later)
-    """
-    with open(infile, "rt") as f:
-        js = json.load(f)
-    out = {}
-    for smi, rec in js.items():
-        if is_int(smi):
-            smi, rec = rec
-        try:
-            graph = smiles2graph(smi)
-        except:
-            continue
-        out[smi] = {"graph": graph}
-    print(len(out))
-
-    with open(outfile, "wb") as f:
-        pickle.dump(out, f)
-
-
-def parse_args():
-    parser = argparse.ArgumentParser(description="Converts SMILES dataset to graphs")
-    parser.add_argument("--smiles_path", default="data/ChEMBL_QA_test.json", type=str, help="path to json file.")
-    parser.add_argument("--save_dir", type=str, help="path to save output.")
-
-    args = parser.parse_args()
-    return args
-
-
-if __name__ == '__main__':
-    args = parse_args()
-    outfile = os.path.join(args.save_dir, 'graph_smi.pkl')
-    convert_simple_graph_smi(args.smiles_path, outfile)
+        return None, None
