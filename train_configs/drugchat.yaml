@@ -8,7 +8,7 @@ model:
   end_sym: "###"
   prompt_path: "prompts/alignment.txt"
   prompt_template: '###Human: {} ###Assistant: '
-  ckpt: ""
+  ckpt: ""  # specify a drugchat checkpoint, which can be pretrained on a large dataset
   encoder_names:
   - gnn
   - image_mol
@@ -16,11 +16,12 @@ model:
   feat_dims:
     graph_feat: 300
     image_feat: 512
-  use_mlp: true
+  use_mlp: false
+  lora_rank: 0
 
 datasets:
-  chembl:  # put any name here for your dataset
-    label: "ChEMBL data"
+  fsmol:
+    label: "fs-mol bioassay data"
     type: default
     vis_processor:
       train:
@@ -33,12 +34,13 @@ datasets:
     - image
     - graph
     build_info:
-      storage: data_public/ChEMBL/train
-      storage_valid: data_public/ChEMBL/val
-      storage_test: data_public/ChEMBL/test
-    sample_ratio: 100
-  drugbank:
-    label: "DrugBank data"
+      storage: /data/fsmol/train
+      storage_valid: /data/fsmol/val
+      storage_test: /data/fsmol/test
+    sample_ratio: 10000  # specify the dataset sampling ratio if there are multiple datasets here
+
+  chembl:
+    label: "chembl QA data"
     type: default
     vis_processor:
       train:
@@ -51,37 +53,42 @@ datasets:
     - image
     - graph
     build_info:
-      storage: data_public/DrugBank/train
-      storage_valid: data_public/DrugBank/val
-      storage_test: data_public/DrugBank/test
+      storage: /data/chembl/__split__2,3,4  # this is the way to speicify the splits 2, 3, and 4 are used for training in cross validation
+      storage_valid: /data/chembl/__split__1
+      storage_test: /data/chembl/__split__0
     sample_ratio: 100
+
+  # You can specify more datasets here. They will be used together
 
 run:
   task: image_text_pretrain
   # optimizer
   lr_sched: "linear_warmup_cosine_lr"
-  init_lr: 3e-5
-  min_lr: 1e-6
-  warmup_lr: 1e-6
+  init_lr: 1e-4
+  min_lr: 1e-5
+  warmup_lr: 1e-5
 
-  weight_decay: 0.03
-  max_epoch: 10
-  iters_per_epoch: 2206
-  batch_size_train: 16
-  batch_size_eval: 16
-  num_workers: 1
-  warmup_steps: 2206
+  weight_decay: 0.01
+  max_epoch: 8
+  iters_per_epoch: null  # set to None for automatically infer number of iterations per epoch
+  batch_size_train: 24
+  batch_size_eval: 24
+  num_workers: 2
+  warmup_steps: 2000
+  # val_iters: 2000
 
   seed: 42
-  output_dir: "output/exp1"
+  output_dir: "/data/drugchat_ckpt"  # to save models
 
-  amp: True
+  amp: true
   resume_ckpt_path: null
 
-  evaluate: False 
+  evaluate: false  # if you just want to do inference (with ckpt specified above), you can set this to true
+  generation: true  # if true, perform text generation on the test set
+  generate_prob: '/data/eval_results/results.csv'  # if specified, perform text generation on the test set for binary classification (answers are yes/no), and save the results to this file
   train_splits: ["train"]
+  valid_splits: ['valid']
   test_splits: ["test"]
-  valid_splits: ["valid"]
   device: "cuda"
   world_size: 1
   dist_url: "env://"

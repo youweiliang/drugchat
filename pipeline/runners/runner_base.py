@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import time
+import shutil
 from pathlib import Path
 
 import torch
@@ -29,6 +30,7 @@ from pipeline.datasets.datasets.dataloader_utils import (
     IterLoader,
     MultiIterLoader,
     PrefetchLoader,
+    ChainLoader,
 )
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler
@@ -58,8 +60,10 @@ class RunnerBase:
         self._scaler = None
         self._dataloaders = None
         self._lr_sched = None
+        self._best_path = None
 
         self.start_epoch = 0
+        print("val_iters:", self.val_iters)
 
         # self.setup_seeds()
         self.setup_output_dir()
@@ -76,6 +80,10 @@ class RunnerBase:
         return self.config.run_cfg.distributed
 
     @property
+    def val_iters(self):
+        return self.config.run_cfg.get('val_iters', False)
+
+    @property
     def model(self):
         """
         A property to get the DDP-wrapped model on the device.
@@ -87,6 +95,7 @@ class RunnerBase:
             # distributed training wrapper
             if self.use_distributed:
                 if self._wrapped_model is None:
+                    print("Init model with DDP", get_rank())
                     self._wrapped_model = DDP(
                         self._model, device_ids=[self.config.run_cfg.gpu]
                     )
@@ -248,6 +257,7 @@ class RunnerBase:
 
             datasets = [self.datasets[split] for split in split_names]
             is_trains = [split in self.train_splits for split in split_names]
+            is_tests = [split in self.test_splits for split in split_names]
 
             batch_sizes = [
                 self.config.run_cfg.batch_size_train
@@ -268,6 +278,7 @@ class RunnerBase:
                 num_workers=self.config.run_cfg.num_workers,
                 batch_sizes=batch_sizes,
                 is_trains=is_trains,
+                is_tests=is_tests,
                 collate_fns=collate_fns,
             )
 
@@ -348,11 +359,27 @@ class RunnerBase:
     def setup_output_dir(self):
         lib_root = Path(registry.get_path("library_root"))
 
-        output_dir = lib_root / self.config.run_cfg.output_dir / self.job_id
+        output_dir = self.config.run_cfg.output_dir
+        if output_dir.startswith('/'): # if already an absolute path
+            output_dir = Path(output_dir) / self.job_id
+        else:
+            output_dir = lib_root / output_dir / self.job_id
         result_dir = output_dir / "result"
+        code_dir = output_dir / "code"
 
         output_dir.mkdir(parents=True, exist_ok=True)
         result_dir.mkdir(parents=True, exist_ok=True)
+        code_dir.mkdir(parents=True, exist_ok=True)
+
+        script_path = os.path.abspath(__file__)
+        shutil.copy(script_path, os.path.join(code_dir, 'runner_base.py'))
+        dirname = os.path.dirname(script_path)
+        dirname = os.path.dirname(dirname)
+        shutil.copy(os.path.join(dirname, 'tasks', 'base_task.py'), os.path.join(code_dir, 'base_task.py'))
+        shutil.copy(os.path.join(dirname, 'datasets/datasets/multimodal_dataset.py'), os.path.join(code_dir, 'multimodal_dataset.py'))
+        shutil.copy(os.path.join(dirname, 'models/drugchat.py'), os.path.join(code_dir, 'drugchat.py'))
+        shutil.copy(os.path.join(dirname, 'models/gnn.py'), os.path.join(code_dir, 'gnn.py'))
+        shutil.copy(os.path.join(dirname, 'models/image_mol.py'), os.path.join(code_dir, 'image_mol.py'))
 
         registry.register_path("result_dir", str(result_dir))
         registry.register_path("output_dir", str(output_dir))
@@ -379,6 +406,9 @@ class RunnerBase:
             self._load_checkpoint(self.resume_ckpt_path)
 
         for cur_epoch in range(self.start_epoch, self.max_epoch):
+            if self.evaluate_only: # if only do evaluation (no training)
+                break
+            
             # training phase
             if not self.evaluate_only:
                 logging.info("Start training")
@@ -394,7 +424,7 @@ class RunnerBase:
 
                     val_log = self.eval_epoch(
                         split_name=split_name, cur_epoch=cur_epoch if not self.evaluate_only else None,
-                        save_path=save_path, file=val_json_file,
+                        save_path=save_path, file=val_json_file, test=False,
                     )
                     if val_log is not None:
                         if is_main_process():
@@ -417,9 +447,6 @@ class RunnerBase:
                 if not self.evaluate_only:
                     self._save_checkpoint(cur_epoch, is_best=False)
 
-            if self.evaluate_only:
-                break
-
             if self.config.run_cfg.distributed:
                 dist.barrier()
 
@@ -434,13 +461,14 @@ class RunnerBase:
         logging.info("Training time {}".format(total_time_str))
 
     def evaluate(self, cur_epoch="best", skip_reload=False, file=None):
+        # Perform the actual inference: generating answers
         test_logs = dict()
 
         if len(self.test_splits) > 0:
             for split_name in self.test_splits:
                 test_logs[split_name] = self.eval_epoch(
                     split_name=split_name, cur_epoch=cur_epoch, skip_reload=skip_reload,
-                    save_path=self._best_path, file=file,
+                    save_path=self._best_path, file=file, test=True,
                 )
 
             return test_logs
@@ -462,7 +490,7 @@ class RunnerBase:
         )
 
     @torch.no_grad()
-    def eval_epoch(self, split_name, cur_epoch, skip_reload=False, save_path=None, file=None):
+    def eval_epoch(self, split_name, cur_epoch, skip_reload=False, save_path=None, file=None, test=False):
         """
         Evaluate the model on a given split.
 
@@ -493,7 +521,7 @@ class RunnerBase:
             test_yaml_config=test_yaml_config,
             save_path=save_path,
         )
-        results = self.task.evaluation(model, data_loader, file=file)
+        results = self.task.evaluation(model, data_loader, file=file, test=test)
 
         if results is not None:
             return self.task.after_evaluation(
@@ -517,6 +545,7 @@ class RunnerBase:
         num_workers,
         batch_sizes,
         is_trains,
+        is_tests,
         collate_fns,
         dataset_ratios=None,
     ):
@@ -524,7 +553,7 @@ class RunnerBase:
         Create dataloaders for training and validation.
         """
 
-        def _create_loader(dataset, num_workers, bsz, is_train, collate_fn):
+        def _create_loader(dataset, num_workers, bsz, is_train, is_test, collate_fn):
             # create a single dataloader for each split
             if isinstance(dataset, ChainDataset) or isinstance(
                 dataset, wds.DataPipeline
@@ -542,7 +571,8 @@ class RunnerBase:
             else:
                 # map-style dataset are concatenated together
                 # setup distributed sampler
-                if self.use_distributed:
+                if self.use_distributed and is_train:
+                    print("Init dataloader with DistributedSampler", get_rank())
                     sampler = DistributedSampler(
                         dataset,
                         shuffle=is_train,
@@ -569,13 +599,15 @@ class RunnerBase:
 
                 if is_train:
                     loader = IterLoader(loader, use_distributed=self.use_distributed)
+                elif not is_test and self.val_iters:  # control the number of iters for val set
+                    loader = IterLoader(loader, use_distributed=self.use_distributed)
 
             return loader
 
         loaders = []
 
-        for dataset, bsz, is_train, collate_fn in zip(
-            datasets, batch_sizes, is_trains, collate_fns
+        for dataset, bsz, is_train, is_test, collate_fn in zip(
+            datasets, batch_sizes, is_trains, is_tests, collate_fns
         ):
             if (isinstance(dataset, list) or isinstance(dataset, tuple)) and len(dataset) == 1:
                 dataset = dataset[0]
@@ -583,15 +615,23 @@ class RunnerBase:
             if isinstance(dataset, list) or isinstance(dataset, tuple):
                 if hasattr(dataset[0], 'sample_ratio') and dataset_ratios is None:
                     dataset_ratios = [d.sample_ratio for d in dataset]
-                loader = MultiIterLoader(
-                    loaders=[
-                        _create_loader(d, num_workers, bsz, is_train, collate_fn[i])
-                        for i, d in enumerate(dataset)
-                    ],
-                    ratios=dataset_ratios,
-                )
+                if is_test:
+                    loader = ChainLoader(
+                        loaders=[
+                            _create_loader(d, num_workers, bsz, is_train, is_test, collate_fn[i])
+                            for i, d in enumerate(dataset)
+                        ]
+                    )
+                else:
+                    loader = MultiIterLoader(
+                        loaders=[
+                            _create_loader(d, num_workers, bsz, is_train, is_test, collate_fn[i])
+                            for i, d in enumerate(dataset)
+                        ],
+                        ratios=dataset_ratios,
+                    )
             else:
-                loader = _create_loader(dataset, num_workers, bsz, is_train, collate_fn)
+                loader = _create_loader(dataset, num_workers, bsz, is_train, is_test, collate_fn)
 
             loaders.append(loader)
 

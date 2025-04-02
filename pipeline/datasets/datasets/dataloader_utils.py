@@ -8,8 +8,39 @@
 import time
 import random
 import torch
+from itertools import chain
 from pipeline.datasets.data_utils import move_to_cuda
 from torch.utils.data import DataLoader
+
+
+class ChainLoader:
+    """
+    A simple wrapper for iterating over multiple iterators.
+
+    Args:
+        loaders (List[Loader]): List of Iterator loaders.
+    """
+
+    def __init__(self, loaders):
+        # assert all loaders has __next__ method
+        self._len = sum(len(ld) for ld in loaders)
+        self.loaders0 = loaders
+
+    def __len__(self):
+        return self._len
+
+    def __iter__(self):
+        loaders_new = []
+        for i in range(len(self.loaders0)):
+            loader = self.loaders0[i]
+            if not hasattr(loader, "__next__"):
+                loader = iter(loader)
+            loaders_new.append(loader)
+            assert hasattr(
+                loader, "__next__"
+            ), "Loader {} has no __next__ method.".format(loader)
+
+        return chain(*loaders_new)
 
 
 class MultiIterLoader:

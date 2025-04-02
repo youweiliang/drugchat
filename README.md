@@ -7,28 +7,25 @@ This repository holds the code of DrugChat. Read the biorxiv [preprint](https://
 ## Introduction
 - In this work, we make an initial attempt towards enabling ChatGPT-like capabilities on drug molecule graphs, by developing a prototype system DrugChat.
 - DrugChat works in a similar way as ChatGPT. Users upload a compound molecule graph and ask various questions about this compound. DrugChat will answer these questions in a multi-turn, interactive manner. 
-- The DrugChat system consists of a graph neural network (GNN), a convolutional neural network (CNN), a large language model (LLM), and an adaptor. The GNN takes a compound molecule graph as input and learns a representation for this graph. The adaptor transforms the graph/image representation produced by the GNN/CNN into another representation that is acceptable to the LLM. The LLM takes the compound representation transformed by the adaptor and users' questions about this compound as inputs and generates answers. All these components are trained end-to-end.
+- The DrugChat system consists of a graph neural network (GNN), a convolutional neural network (i.e., ResNet), a large language model (LLM), and an adaptor. The GNN takes a compound molecule graph as input and learns a representation for this graph. The adaptor transforms the graph/image representation produced by the GNN/CNN into another representation that is acceptable to the LLM. The LLM takes the compound representation transformed by the adaptor and users' questions about this compound as inputs and generates answers. All these components are trained end-to-end.
 - To train DrugChat, we collected instruction tuning datasets.
 
 ![overview](figs/DrugChat.png)
 
 ## Datasets
 
-Please download the data json files from the [Google drive](https://drive.google.com/drive/folders/1ofHOV5UFJUf2Xb-UljbK--wILF-_vBod?usp=sharing). The json files contain data for the ChEMBL, PubChem, and DrugBank Instruction Tuning Datasets. Save the files in a folder named `data_public` under this repository (repo). The data structure is as follows. 
-
-{SMILES String: [ [Question1 , Answer1], [Question2 , Answer2]... ] }
+Please download the data json files from the [Hugging Face](https://huggingface.co/datasets/youweiliang/drugchat). The structure of each dataset is described in [scalable_data_format.md](scalable_data_format.md).
 
 
-## Getting Started
-### System Requirements
+## System Requirements
 The DrugChat was tested on Ubuntu 20.04 with an Nvidia A100 80G GPU (Nvidia driver version: 560.35.03). Other Linux systems and GPUs (with more than 40 GB GPU memory) should also work. The Python environment was based on [Miniconda](https://docs.anaconda.com/miniconda/miniconda-install/) 23.1.0. You can install the latest Nvidia driver and the latest Minicond, as they should not make any difference. The complete list of software requirements is specified in [environment.yml](environment.yml).
 
 
-### Installation
+## Installation
 
-Typical install time on an Linux server varies from 10 to 30 minutes, depending on your Internet connection speed.
+Typical install time on an Linux server is 10 minutes, depending on your Internet connection speed.
 
-**1. Prepare the code and the environment**
+### Setting up environment
 
 [Install Git](https://git-scm.com/downloads) if it has not been installed. 
 Git clone our repository, creating a python environment and ativate it via the following command
@@ -42,25 +39,13 @@ conda activate drugchat
 
 Verify the installation of `torch` and `torchvision` is successful by running `python -c "import torchvision; print(torchvision.__version__)"`. If it outputs the version number without any warnings or errors, then you can go to the next step (installing PyTorch Geometric). __If it outputs any warnings or errors__, try to uninstall `torch` by `conda uninstall pytorch torchvision torchaudio cudatoolkit` and then reinstall them following [here](https://pytorch.org/get-started/previous-versions/#v1121). You need to find the correct command according to the CUDA version your GPU driver supports (check `nvidia-smi`). For example, I found my GPU driver supported CUDA 11.6, so I run `conda install pytorch==1.12.1 torchvision==0.13.1 torchaudio==0.12.1 cudatoolkit=11.6 -c pytorch -c conda-forge`.
 
-### Installing PyTorch Geometric
+#### Installing PyTorch Geometric
 Run `conda install pyg=2.3.0 pytorch-scatter=2.1.0 -c pyg` to install PyTorch Geometric. If some error related to PyTorch Geometric or pytorch-scatter show up later when running the code, try to follow [here](https://pytorch-geometric.readthedocs.io/en/latest/install/installation.html) to reinstall them. 
 
 
-### Installing RDKit
-**To get the data conversion to work properly, you need to create another environment (`rdkit`)**
+### Preparing pretrained weights
 
-**It takes around 24 GB GPU memory for the demo.**
-
-To create the `rdkit` environment and run the process, run
-```
-conda create -c conda-forge -n rdkit rdkit
-conda activate rdkit
-pip install numpy
-python dataset/smiles2graph_demo.py
-```
-
-**2. Prepare the pretrained Vicuna weights**
-
+#### Vicuna
 The current version of DrugChat is built on the v0 versoin of Vicuna-13B.
 Please refer to our instruction [here](PrepareVicuna.md) 
 to prepare the Vicuna weights.
@@ -79,54 +64,37 @@ Then, set the path to the vicuna weight in the model config file
 [here](pipeline/configs/models/drugchat.yaml#L16) at Line 16.
 
 
-Download the GNN and CNN checkpoints from the [Google drive](https://drive.google.com/drive/folders/1DlLzYf7MHHdA09l5Cv3H5KUULmtazwo1?usp=sharing) and save them in a folder named `ckpt` under this repo. The files would be like
+#### GIN and ResNet
+Download the GIN and ResNet checkpoints from the [Google drive](https://drive.google.com/drive/folders/1DlLzYf7MHHdA09l5Cv3H5KUULmtazwo1?usp=sharing) and save them in a folder named `ckpt` under this repo. The files would be like
 ```
 ckpt
-├── gcn_contextpred.pth
+├── gin_contextpred.pth
 ├── ImageMol.pth.tar
 ```
 
 
-### Training
-
-To prepare the data for training and evaluation, the data json files should be put under a folder named `data_public` in this directory. Then, run `bash convert_data.sh` to convert the data to molecular images and graphs.
-
+## Training
 **The training process needs at least 40 GB GPU memory.** 
 
-The training configuration file is [train_configs/drugchat.yaml](train_configs/drugchat.yaml). You may want to change the number of epochs and other hyper-parameters there, such as `max_epoch`, `init_lr`, `min_lr`,`warmup_steps`, `batch_size_train`. You need to adjust `iters_per_epoch` so that `iters_per_epoch` * `batch_size_train` = your training set size.
+Download the datasets and set the dataset path in [train_configs/drugchat.yaml](train_configs/drugchat.yaml), which is the training configuration file. The config file includes the examples of the FS-Mol and ChEMBL datasets. You may want to change the number of epochs and other hyper-parameters there, such as `max_epoch`, `init_lr`, `min_lr`,`warmup_steps`, `batch_size_train`. 
 
-Start training the projection layer that connects the GNN output and the LLaMA model by running:
+Start training the DrugChat model by running:
 ```
 torchrun --nproc_per_node 1 train.py --cfg-path train_configs/drugchat.yaml
 ```
 
-### Inference by Launching Demo Locally
-To get the inference to work properly, you need to activate the environment `rdkit` in a terminal and launch a process which converts SMILES strings to molecular images and graphs. 
+The evaluation results (including AUROC and AUPRC) will be save to the file specified by `generate_prob` in the config file.
 
-To launch the conversion process, run
-```
-conda activate rdkit
-python dataset/smiles2graph_image_demo.py
-```
-Then, the python process `smiles2graph_image_demo.py` will be running in the backend to serve the `demo.py`.
+
+## Demo
 
 **It takes around 24 GB GPU memory for the demo to work.**
 
 Find the checkpoint ('.pth' files) the training process saves, which is the `output_dir` specified in the training configuration [train_configs/drugchat.yaml](train_configs/drugchat.yaml) by default. Specify the checkpoint path in the `ckpt` field under the model section in the evaluation configuration file [eval_configs/drugbank.yaml](eval_configs/drugbank.yaml).
 
-Now we launch the `demo.py` in our `drugchat` environment. Make sure you have run `conda activate drugchat` in a new terminal in the same machine where you launch the python process `smiles2graph_image_demo.py`. Then, start the demo [demo.sh](demo.sh) on your local machine by running `bash demo.sh`. Then, open the URL created by the demo and try it out! This should open the demo website, where you can input a SMILES string and a textual question to ask DrugChat. It could take one minute for Drugchat to generate a response and show it on the demo website, depending on your GPU's computational power and the response's length.
 
-### Batch inference
-Make sure to launch the python process `smiles2graph_image_demo.py` in another terminal first. 
-Then, you can launch a Python script to obtain DrugChat's responses for a batch of queries:
-```
-python inference.py --cfg-path eval_configs/drugbank.yaml --gpu-id 0 --in_file xxx/smiles_img_qa.json --out_file eval_results/aaa.json
-```
-where the input file `smiles_img_qa.json` should be in this format:  
-{index: [ SMILES: [ [Question1 , Answer1], [Question2 , Answer2]... ] ], ... }   
-If there are no ground-truth answers in the input file, just put an empty string in the places of answers as placeholders. 
+Run `bash demo.sh` to start the demo. Then, open the URL created by the demo and try it out! This should open the demo website, where you can input a SMILES string and a textual question to ask DrugChat. It could take one minute for Drugchat to generate a response and show it on the demo website, depending on your GPU's computational power and the response's length.
 
-The inference results are saved to the out_file specified above.
 
 ## Acknowledgement
 This repo is based on the following repositories.
