@@ -1,4 +1,4 @@
-The data format that stores data in json files is not scalable. We recommend storing data in the following format to avoid data duplication and make the training scalable with large data. This effectively avoids OOM when the data is very large (e.g., millions of entries). 
+Previously we used json data format in this codebase, but we found the json data format is not scalable, resulting in data duplication. Therefore, we have changed to store data in the following parquet format to make the training scalable with large data. This effectively avoids OOM when the data is very large (e.g., millions of entries). 
 
 Specifically, a data directory should contains the following 4 files (which are compressed pandas DataFrame files). The compound_idx, question_idx, and label in "QA.parquet" can be looked up in the remaining 3 files. They can be read by `pandas.read_parquet` in python.
 
@@ -33,6 +33,6 @@ label text
     1  Yes
 ```
 
-If you are using the previously not scalable data format: `{SMILES String: [ [Question1 , Answer1], [Question2 , Answer2]... ] }`, you can use this script `dataset/convert_json2pd.py` to convert the not scalable data format to the scalable data format. 
+If you have used the previously json data format from this codebase: `{SMILES String: [ [Question1 , Answer1], [Question2 , Answer2]... ] }`, you can use this script `dataset/convert_json2pd.py` to convert the json data format to the scalable data format. 
 
-Then, specify the directory in the build_info of the datasets in your train config yaml file to start training.
+Then, specify the directory in the build_info of the datasets in your train config yaml file to start training (see README.md).

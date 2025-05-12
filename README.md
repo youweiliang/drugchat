@@ -14,7 +14,7 @@ This repository holds the code of DrugChat. Read the biorxiv [preprint](https://
 
 ## Datasets
 
-Please download the data json files from the [Hugging Face](https://huggingface.co/datasets/youweiliang/drugchat). The structure of each dataset is described in [scalable_data_format.md](scalable_data_format.md).
+Please download the data files from the [Hugging Face](https://huggingface.co/datasets/youweiliang/drugchat). The structure of each dataset is described in [scalable_data_format.md](scalable_data_format.md).
 
 
 ## System Requirements
@@ -113,5 +113,3 @@ Many codes are based on [MiniGPT-4](https://github.com/Vision-CAIR/MiniGPT-4) wi
 ## Disclaimer
 
 This is a prototype system that has not been systematically and comprehensively validated by pharmaceutical experts yet. Please use with caution. 
-
-Trained models will be released after we thoroughly validate the system with pharmaceutical experts.
